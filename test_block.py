@@ -3,6 +3,7 @@ import main
 def test_block():
     emailResults = []
     testSet = {
+        "https://www.houseandflat.net/"
         # "https://www.idaspb.com"
         # "https://lp.laresds.ru/",
         # "https://www.o-mossur.ru",
@@ -48,3 +49,6 @@ def test_block():
         emailResults.append(emailResult)
     print(emailResults)
 
+def test_block2():
+    url = "https://www.houzz.ru/professionaly/dizaynery-interyera/arhitekturno-proektnaya-masterskaya-№1-pfvwru-pf~850626898"
+    main.fetchSiteSoup(url)

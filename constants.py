@@ -1,6 +1,6 @@
 import re
 
-version = 0.5
+version = 0.51
 
 db_name = "crawler2.db"
 output_file_name = "outfile.csv"

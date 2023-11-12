@@ -1,3 +1,5 @@
+import socket
+
 import certifi
 import time
 import requests
@@ -7,6 +9,7 @@ import urllib
 import ssl
 from bs4 import BeautifulSoup
 from urllib3.exceptions import NameResolutionError, MaxRetryError, HTTPError
+from urllib import parse
 from urllib import request
 from urllib import error
 from dataclasses import dataclass, astuple
@@ -24,6 +27,11 @@ class SoupResult:
 @dataclass
 class EmailResult:
     emails = set()
+    error: str
+
+@dataclass
+class WebsiteUrlResult:
+    websiteUrl: str
     error: str
 
 currentPageNumber = 0
@@ -59,18 +67,25 @@ def openSiteWithFailedVerify(req: urllib.request.Request):
         soup = BeautifulSoup(html, 'html.parser')
         return SoupResult(soup, None)
     except urllib.error.URLError as e:
-        print(f"{e.code} Error when requesting {req.full_url}")
-        return SoupResult(None, f"{e.code} Error when requesting {req.full_url}")
+        err_str = "Unknown error"
+        if hasattr(e, 'reason'):
+            print(e.reason)
+            err_str = str(e.reason)
+            print(f"{err_str} Error when requesting {req.full_url}")
+        return SoupResult(None, f"{err_str} Error when requesting {req.full_url}")
 
 
 def fetchSiteSoup(siteUrl):
-    req = urllib.request.Request(siteUrl, unverifiable=False)
+    print(f"Fetching Soup for Url: {siteUrl}")
+    url_parced = urllib.parse.urlparse(siteUrl)
+    url = url_parced.scheme + "://" + url_parced.netloc + urllib.parse.quote(url_parced.path)
+    req = urllib.request.Request(url, unverifiable=False)
     req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:106.0) Gecko/20100101 Firefox/106.0')
     req.add_header('Accept',
                    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8')
     req.add_header('Accept-Language', 'en-US,en;q=0.5')
     try:
-        opened = urllib.request.urlopen(req, timeout=30).read()
+        opened = urllib.request.urlopen(req, timeout=40).read()
         try:
             html = opened.decode('utf-8')
             soup = BeautifulSoup(html, 'html.parser')
@@ -82,22 +97,32 @@ def fetchSiteSoup(siteUrl):
                 soup = BeautifulSoup(html, 'html.parser')
                 return SoupResult(soup, None)
             except UnicodeDecodeError as e:
+                print(f"{e.reason} Second Error when decoding {siteUrl}")
                 return SoupResult(None, e.reason)
     except urllib.error.HTTPError as e:
         if e.code >= 400:
             print(f"{e.code} Error when requesting {siteUrl}")
             return SoupResult(None, f"{siteUrl} returns {e.code} error")
     except urllib.error.URLError as e:
-        print(e.reason)
-        err_str = str(e.reason)
+        err_str = "Unknown error"
+        if hasattr(e, 'reason'):
+            print(e.reason)
+            err_str = str(e.reason)
+            print(f"{err_str} Error when requesting {siteUrl}")
         if (Net_Error.COMMON_URLOPEN_ERROR.value in str(err_str).lower() or
-                Net_Error.UNRECOGNIZED_NAME.value in str(err_str).lower()):
-            print(f"{e.reason} Error when requesting {siteUrl}")
-            return SoupResult(None, f"{siteUrl} returns {e.reason} error")
+                Net_Error.UNRECOGNIZED_NAME.value in str(err_str).lower() or
+                Net_Error.OPERATION_TIMED_OUT.value in str(err_str).lower() or
+                Net_Error.INTERNAL_ERROR.value in str(err_str).lower()):
+            return SoupResult(None, f"{siteUrl} returns {err_str} error")
         return openSiteWithFailedVerify(req)
         # fetchSiteSoupByRequests(siteUrl)
     except ssl.SSLCertVerificationError:
         return openSiteWithFailedVerify(req)
+    except socket.timeout as e:
+        err_str = f"Timeout error when requesting {siteUrl}"
+        print(err_str)
+        return SoupResult(None, err_str)
+
 def processPage(pageUrl):
     soupResult = fetchSiteSoup(pageUrl)
     if soupResult.soup is None:
@@ -114,23 +139,23 @@ def processPage(pageUrl):
     for item in result_items:
         itemJson = item.find(type="application/ld+json")
         itemHyperlink = item.find("a")
-        websiteUrl = processingInternalLink(itemHyperlink["href"])
+        websiteUrlResult = processingInternalLink(itemHyperlink["href"])
         itemList = json.loads(itemJson.text)
         itemName = itemList["name"]
         itemPhone = itemList["telephone"]
         itemAddressList = itemList["address"]
         itemPostalAddress = itemAddressList["streetAddress"]
-        outputString = f"\n{itemName},{itemPhone},{websiteUrl},"
         print(itemName)
-        if "error" not in websiteUrl.lower():
-            emailResults = processingEmail.processingEmail(websiteUrl)
+        if websiteUrlResult.error is None:
+            outputString = f"\n{itemName},{itemPhone},{websiteUrlResult.websiteUrl},"
+            emailResults = processingEmail.processingEmail(websiteUrlResult.websiteUrl)
             if emailResults is not None:
                 if len(emailResults) > 0:
                     emailString = ','.join(list(map(str, emailResults)))
                     outputString = outputString + emailString
         else:
-            outputString = outputString + websiteUrl
-        # db_util.saveItem(itemName, itemPhone, websiteUrl)
+            outputString = f"\n{itemName},{itemPhone},{websiteUrlResult.error},"
+        # db_util.saveItem(itemName, itemPhone, websiteUrlResult)
         with open(constants.output_file_name, 'a') as file:
             file.write(outputString)
 
@@ -139,15 +164,15 @@ def processingInternalLink(internal_url):
     soupResult = fetchSiteSoup(internal_url)
     if soupResult.soup is None:
         if soupResult.error != None:
-            return soupResult.error
+            return WebsiteUrlResult(None, soupResult.error)
         return
     websiteInfo = soupResult.soup.find("div", class_="sc-183mtny-0 sc-1uw6j8i-0 BusinessDetails__StyledCell-sc-1iscszt-0 dYJOPh ecpWHO gRCcss hz-track-me hui-cell")
     if websiteInfo is None:
-        return "Error: No Site Content"
+        return WebsiteUrlResult(None, "Error: No Site")
     websiteLink = websiteInfo.find("a")
     websiteNameContainer = websiteLink.find("span", class_="sc-mwxddt-0 Website__EllipsisText-sc-19fzbgj-0 ctdszu dRuQKg")
     websiteUrl = "https://" + websiteNameContainer.text
-    return websiteUrl
+    return WebsiteUrlResult(websiteUrl, None)
 
 def appExit():
     # db_util.close_db()
@@ -160,10 +185,10 @@ def start():
 
     # db_util.open_db()
 
-    with open ('outfile.cvs', 'w') as file:
+    with open (constants.output_file_name, 'w') as file:
         file.write(constants.headerString)
 
-    while currentItemNumber < 90: #itemNumber:
+    while currentItemNumber < 210: #itemNumber:
         currentItemNumber = currentPageNumber * 15
         page_url = constants.primer_url + f"/p/{currentItemNumber}"
         print(page_url)
@@ -173,6 +198,7 @@ def start():
 if __name__ == '__main__':
     startTime = time.time()
     # test_block.test_block()
+    # test_block.test_block2()
     start()
     print("--- %s seconds ---" % (time.time() - startTime))
     appExit()
