@@ -15,27 +15,18 @@ from urllib import error
 from dataclasses import dataclass, astuple
 import processingEmail
 import constants
-import db_util
+import dbutil
+from models.company_details import CompanyDetails
+from models.soup_result import SoupResult
+from models.website_url_result import WebsiteUrlResult
 from net_error import Net_Error
+from dbutil import DbUtil
 import test_block
 
-@dataclass
-class SoupResult:
-    soup: BeautifulSoup
-    error: str
-
-@dataclass
-class EmailResult:
-    emails = set()
-    error: str
-
-@dataclass
-class WebsiteUrlResult:
-    websiteUrl: str
-    error: str
 
 currentPageNumber = 0
 currentItemNumber = 0
+db: DbUtil
 
 def fetchSiteSoupByRequests(siteUrl):
     try:
@@ -113,7 +104,7 @@ def fetchSiteSoup(siteUrl):
                 Net_Error.UNRECOGNIZED_NAME.value in str(err_str).lower() or
                 Net_Error.OPERATION_TIMED_OUT.value in str(err_str).lower() or
                 Net_Error.INTERNAL_ERROR.value in str(err_str).lower()):
-            return SoupResult(None, f"{siteUrl} returns {err_str} error")
+            return SoupResult(None, f"Error: {err_str}")
         return openSiteWithFailedVerify(req)
         # fetchSiteSoupByRequests(siteUrl)
     except ssl.SSLCertVerificationError:
@@ -122,6 +113,18 @@ def fetchSiteSoup(siteUrl):
         err_str = f"Timeout error when requesting {siteUrl}"
         print(err_str)
         return SoupResult(None, err_str)
+
+def saveResult(company: CompanyDetails):
+    if company.error is None:
+        outputString = f"\n{company.name},{company.phone},{company.websiteUrl},"
+        if len(company.emails) > 0:
+            emailString = ';'.join(list(map(str, company.emails)))
+            outputString = outputString + emailString
+    else:
+        outputString = f"\n{company.name},{company.phone},,{company.error},"
+    db.save_company_details(company)
+    with open(constants.output_file_name, 'a') as file:
+        file.write(outputString)
 
 def processPage(pageUrl):
     soupResult = fetchSiteSoup(pageUrl)
@@ -137,27 +140,27 @@ def processPage(pageUrl):
 
     # nextPageLinkContainer = soup.find("a", class_="hz-pagination-link hz-pagination-link--next")
     for item in result_items:
+        company = CompanyDetails()
         itemJson = item.find(type="application/ld+json")
         itemHyperlink = item.find("a")
         websiteUrlResult = processingInternalLink(itemHyperlink["href"])
         itemList = json.loads(itemJson.text)
-        itemName = itemList["name"]
-        itemPhone = itemList["telephone"]
+        company.name = itemList["name"]
+        company.phone = itemList["telephone"]
         itemAddressList = itemList["address"]
-        itemPostalAddress = itemAddressList["streetAddress"]
-        print(itemName)
+        company.postalAddress = itemAddressList["streetAddress"]
+        print(company.name)
         if websiteUrlResult.error is None:
-            outputString = f"\n{itemName},{itemPhone},{websiteUrlResult.websiteUrl},"
-            emailResults = processingEmail.processingEmail(websiteUrlResult.websiteUrl)
-            if emailResults is not None:
-                if len(emailResults) > 0:
-                    emailString = ','.join(list(map(str, emailResults)))
-                    outputString = outputString + emailString
+            company.websiteUrl = websiteUrlResult.websiteUrl
+            emailResult = processingEmail.processingEmail(company.websiteUrl)
+            if len(emailResult.emails) > 0:
+                company.emails = emailResult.emails
+            elif emailResult.error is not None:
+                company.error = emailResult.error
         else:
-            outputString = f"\n{itemName},{itemPhone},{websiteUrlResult.error},"
-        # db_util.saveItem(itemName, itemPhone, websiteUrlResult)
-        with open(constants.output_file_name, 'a') as file:
-            file.write(outputString)
+            company.websiteUrl = ""
+            company.error = websiteUrlResult.error
+        saveResult(company)
 
 
 def processingInternalLink(internal_url):
@@ -175,7 +178,7 @@ def processingInternalLink(internal_url):
     return WebsiteUrlResult(websiteUrl, None)
 
 def appExit():
-    # db_util.close_db()
+    db.close_db()
     exit()
 
 def start():
@@ -183,12 +186,10 @@ def start():
     global currentItemNumber
     global currentPageNumber
 
-    # db_util.open_db()
-
     with open (constants.output_file_name, 'w') as file:
         file.write(constants.headerString)
 
-    while currentItemNumber < 210: #itemNumber:
+    while currentItemNumber < 44: #itemNumber:
         currentItemNumber = currentPageNumber * 15
         page_url = constants.primer_url + f"/p/{currentItemNumber}"
         print(page_url)
@@ -199,6 +200,8 @@ if __name__ == '__main__':
     startTime = time.time()
     # test_block.test_block()
     # test_block.test_block2()
+
+    db = DbUtil()
     start()
     print("--- %s seconds ---" % (time.time() - startTime))
     appExit()

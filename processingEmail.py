@@ -5,6 +5,9 @@ import constants
 from urllib.parse import urlparse
 import re
 
+from models.email_result import EmailResult
+
+
 def isValid(email):
     if re.fullmatch(constants.regexValidation, email):
         print(f"{email} Valid email")
@@ -19,11 +22,12 @@ def getTextSearchResults(soup):
     textSearchResults = re.findall(constants.regexEmail, str(txt))
     for textResult in textSearchResults:
         if isValid(textResult):
-            resultSet.update([textResult])
+            resultSet.update([str(textResult).lower()])
     return resultSet
 
 def processingEmail(siteUrl):
     startTime = time.time()
+    emailResult = EmailResult()
     primer_hostname = urlparse(siteUrl).netloc
     primer_scheme = urlparse(siteUrl).scheme
     results = set()
@@ -32,8 +36,9 @@ def processingEmail(siteUrl):
     soupResult = main.fetchSiteSoup(siteUrl)
     if soupResult.soup is None:
         if soupResult.error is not None:
-            results.add(soupResult.error)
-        return results
+            # results.add(soupResult.error)
+            emailResult.error = soupResult.error
+        return emailResult
     soup = soupResult.soup
     linkContainers = soup.find_all("a")
 
@@ -44,7 +49,7 @@ def processingEmail(siteUrl):
             if linkUrl != None and "mailto" in linkUrl:
                 emailAddress = linkUrl.replace("mailto:", "")
                 if isValid(emailAddress):
-                    results.add(emailAddress)
+                    results.add(emailAddress.lower())
 
             hostname = urlparse(linkUrl).netloc
             if hostname == primer_hostname or len(hostname) == 0:
@@ -85,9 +90,10 @@ def processingEmail(siteUrl):
                     if linkUrl != None and "mailto" in linkUrl:
                         emailAddress = linkUrl.replace("mailto:", "")
                         if isValid(emailAddress):
-                            results.add(emailAddress)
+                            results.add(emailAddress.lower())
             results.update(set(getTextSearchResults(soup)))
 
     print(results)
     print("--- %s seconds ---" % (time.time() - startTime))
-    return results
+    emailResult.emails = results
+    return emailResult

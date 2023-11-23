@@ -2,3 +2,4 @@ __pycache__
 __pycache__/*
 .idea/*
 *.csv
+crawler2.db
