@@ -1,9 +1,13 @@
 import main
+import processingEmail
+
 
 def test_block():
     emailResults = []
     testSet = {
-        "https://www.houseandflat.net/"
+        "https://good-kvadro.com/"
+        # "https://paevskiydesign.ru/"
+        # "https://www.houseandflat.net/"
         # "https://www.idaspb.com"
         # "https://lp.laresds.ru/",
         # "https://www.o-mossur.ru",
@@ -45,6 +49,7 @@ def test_block():
     }
     testList = list(testSet)
     for item in testSet:
+        print(f"{processingEmail.isIriValid(item)}")
         emailResult = main.processingEmail.processingEmail(item)
         emailResults.append(emailResult)
     print(emailResults)

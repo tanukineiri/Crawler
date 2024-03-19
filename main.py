@@ -1,7 +1,9 @@
 import socket
+from http.client import RemoteDisconnected
 
 import certifi
 import time
+
 import requests
 import json
 import urllib3
@@ -17,6 +19,7 @@ import processingEmail
 import constants
 import dbutil
 from models.company_details import CompanyDetails
+from models.config import Config
 from models.soup_result import SoupResult
 from models.website_url_result import WebsiteUrlResult
 from net_error import Net_Error
@@ -24,9 +27,8 @@ from dbutil import DbUtil
 import test_block
 
 
-currentPageNumber = 0
-currentItemNumber = 0
 db: DbUtil
+config: Config
 
 def fetchSiteSoupByRequests(siteUrl):
     try:
@@ -43,6 +45,7 @@ def fetchSiteSoupByRequests(siteUrl):
     return SoupResult(soup, None)
 
 def openSiteWithFailedVerify(req: urllib.request.Request):
+    global opened
     print(f"Tryin' to open {req.full_url} without sertificate check")
     result = ssl.get_default_verify_paths()
     cafile = certifi.where()
@@ -54,7 +57,8 @@ def openSiteWithFailedVerify(req: urllib.request.Request):
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
     try:
-        html = urllib.request.urlopen(req, context=context).read().decode('utf-8')
+        opened = urllib.request.urlopen(req, context=context).read()
+        html = opened.decode('utf-8')
         soup = BeautifulSoup(html, 'html.parser')
         return SoupResult(soup, None)
     except urllib.error.URLError as e:
@@ -64,12 +68,41 @@ def openSiteWithFailedVerify(req: urllib.request.Request):
             err_str = str(e.reason)
             print(f"{err_str} Error when requesting {req.full_url}")
         return SoupResult(None, f"{err_str} Error when requesting {req.full_url}")
+    except UnicodeDecodeError as e:
+        print(f"{e.reason} Error when decoding {req.full_url}")
+        return processingWithDecodeError(opened, req.full_url)
+    except RemoteDisconnected as e:
+        print(f"Remote end closed connection without response: {req.full_url}")
+        return SoupResult(None, f"Remote end closed connection without response: {req.full_url}")
+
+
+def processingWithDecodeError(opened, siteUrl):
+    print(f"Trying decoding {siteUrl} with Latin1 encoding")
+    try:
+        html = opened.decode('latin-1')
+        soup = BeautifulSoup(html, 'html.parser')
+        return SoupResult(soup, None)
+    except UnicodeDecodeError as e:
+        print(f"{e.reason} Second Error when decoding {siteUrl}")
+        print(f"Trying decoding {siteUrl} with Cp1251 encoding")
+        try:
+            html = opened.decode('cp1251')
+            soup = BeautifulSoup(html, 'html.parser')
+            return SoupResult(soup, None)
+        except UnicodeDecodeError as e:
+            print(f"{e.reason} Third Error when decoding {siteUrl}")
+            return SoupResult(None, e.reason)
 
 
 def fetchSiteSoup(siteUrl):
+    global opened
     print(f"Fetching Soup for Url: {siteUrl}")
     url_parced = urllib.parse.urlparse(siteUrl)
-    url = url_parced.scheme + "://" + url_parced.netloc + urllib.parse.quote(url_parced.path)
+    url = url_parced.scheme + "://" + urllib.parse.quote(url_parced.netloc) + urllib.parse.quote(url_parced.path)
+    siteName = url_parced.netloc
+    for keyWord in constants.possibleNotUsefulSites:
+        if keyWord in siteName:
+            return SoupResult(None, f"Error: site blocked in Russia")
     req = urllib.request.Request(url, unverifiable=False)
     req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:106.0) Gecko/20100101 Firefox/106.0')
     req.add_header('Accept',
@@ -77,33 +110,32 @@ def fetchSiteSoup(siteUrl):
     req.add_header('Accept-Language', 'en-US,en;q=0.5')
     try:
         opened = urllib.request.urlopen(req, timeout=40).read()
-        try:
-            html = opened.decode('utf-8')
-            soup = BeautifulSoup(html, 'html.parser')
-            return SoupResult(soup, None)
-        except UnicodeDecodeError as e:
-            print(f"{e.reason} Error when decoding {siteUrl}")
-            try:
-                html = opened.decode('latin-1')
-                soup = BeautifulSoup(html, 'html.parser')
-                return SoupResult(soup, None)
-            except UnicodeDecodeError as e:
-                print(f"{e.reason} Second Error when decoding {siteUrl}")
-                return SoupResult(None, e.reason)
+        # try:
+        html = opened.decode('utf-8')
+        soup = BeautifulSoup(html, 'html.parser')
+        return SoupResult(soup, None)
+        # except UnicodeDecodeError as e:
+        #     print(f"{e.reason} Error when decoding {siteUrl}")
+        #     return processingWithDecodeError(opened, siteUrl)
+    except UnicodeDecodeError as e:
+        print(f"{e.reason} Error when decoding {siteUrl}")
+        return processingWithDecodeError(opened, siteUrl)
     except urllib.error.HTTPError as e:
         if e.code >= 400:
-            print(f"{e.code} Error when requesting {siteUrl}")
+            print(f"{e.code} HTTPError when requesting {siteUrl}")
             return SoupResult(None, f"{siteUrl} returns {e.code} error")
     except urllib.error.URLError as e:
         err_str = "Unknown error"
         if hasattr(e, 'reason'):
             print(e.reason)
             err_str = str(e.reason)
-            print(f"{err_str} Error when requesting {siteUrl}")
+            print(f"{err_str} URLError when requesting {siteUrl}")
         if (Net_Error.COMMON_URLOPEN_ERROR.value in str(err_str).lower() or
                 Net_Error.UNRECOGNIZED_NAME.value in str(err_str).lower() or
                 Net_Error.OPERATION_TIMED_OUT.value in str(err_str).lower() or
-                Net_Error.INTERNAL_ERROR.value in str(err_str).lower()):
+                Net_Error.INTERNAL_ERROR.value in str(err_str).lower() or
+                "timed out" in str(err_str).lower()):
+            print(f"Timed out error value: {Net_Error.OPERATION_TIMED_OUT.value}")
             return SoupResult(None, f"Error: {err_str}")
         return openSiteWithFailedVerify(req)
         # fetchSiteSoupByRequests(siteUrl)
@@ -183,14 +215,15 @@ def appExit():
 
 def start():
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    global currentItemNumber
-    global currentPageNumber
+    currentItemNumber = config.currentItemNumber
+    currentPageNumber = config.currentPageNumber
 
     with open (constants.output_file_name, 'w') as file:
         file.write(constants.headerString)
 
-    while currentItemNumber < 44: #itemNumber:
+    while currentItemNumber < constants.maxItemNumber:
         currentItemNumber = currentPageNumber * 15
+        config.save(currentPageNumber, currentItemNumber)
         page_url = constants.primer_url + f"/p/{currentItemNumber}"
         print(page_url)
         processPage(page_url)
@@ -201,10 +234,8 @@ if __name__ == '__main__':
     # test_block.test_block()
     # test_block.test_block2()
 
+    config = Config()
     db = DbUtil()
     start()
     print("--- %s seconds ---" % (time.time() - startTime))
     appExit()
-
-    # TODO add DB support
-    # TODO filter results

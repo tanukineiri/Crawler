@@ -3,25 +3,43 @@ from bs4 import Tag
 import main
 import constants
 from urllib.parse import urlparse
+from rfc3987 import parse
 import re
 
 from models.email_result import EmailResult
 
 
-def isValid(email):
+def isEmailValid(email):
     if re.fullmatch(constants.regexValidation, email):
-        print(f"{email} Valid email")
+        print(f"{email} is valid")
         return True
     else:
-        print(f"{email} Invalid email")
+        print(f"{email} is invalid")
         return False
+
+def isIriValid(url):
+    try:
+        parts = parse(url, rule='IRI')
+        if not parts["scheme"] or not parts["authority"]:
+            return False
+        else:
+            return True
+    except ValueError as e:
+        print(f"{url} IRI validation error")
+        return False
+    # if re.fullmatch(constants.regexIri, url):
+    #     print(f"{url} is valid")
+    #     return True
+    # else:
+    #     print(f"{url} is invalid")
+    #     return False
 
 def getTextSearchResults(soup):
     txt = soup.get_text(separator=" ").strip()
     resultSet = set()
     textSearchResults = re.findall(constants.regexEmail, str(txt))
     for textResult in textSearchResults:
-        if isValid(textResult):
+        if isEmailValid(textResult):
             resultSet.update([str(textResult).lower()])
     return resultSet
 
@@ -34,6 +52,9 @@ def processingEmail(siteUrl):
     possibleContactUrls = set()
     print(f"Processing email for: {siteUrl}")
     soupResult = main.fetchSiteSoup(siteUrl)
+    if soupResult is None:
+        emailResult.error = "Site is not responding"
+        return emailResult
     if soupResult.soup is None:
         if soupResult.error is not None:
             # results.add(soupResult.error)
@@ -48,7 +69,7 @@ def processingEmail(siteUrl):
             linkUrl = link["href"]
             if linkUrl != None and "mailto" in linkUrl:
                 emailAddress = linkUrl.replace("mailto:", "")
-                if isValid(emailAddress):
+                if isEmailValid(emailAddress):
                     results.add(emailAddress.lower())
 
             hostname = urlparse(linkUrl).netloc
@@ -59,7 +80,7 @@ def processingEmail(siteUrl):
                         if len(hostname) == 0:
                             possibleContactUrl = primer_scheme + "://" + primer_hostname.rstrip("/") + "/" + link["href"].lstrip("/")
                             possibleContactUrls.add(possibleContactUrl)
-                            print(f"Syntesized mail url: ${possibleContactUrl}")
+                            print(f"Syntesized mail url: {possibleContactUrl}")
                         else:
                             possibleContactUrls.add(link["href"])
 
@@ -78,20 +99,24 @@ def processingEmail(siteUrl):
     if len(results) == 0 and len(possibleContactUrls) != 0:
         for possibleContactUrl in possibleContactUrls:
             print(f"Processing email for inner page: {possibleContactUrl}")
-            soup = main.fetchSiteSoup(possibleContactUrl).soup
-            if soup is None:
-                if soupResult.error is not None:
-                    results.add(soupResult.error)
-                return results
-            linkContainers = soup.find_all("a")
-            for link in linkContainers:
-                if "href" in link.attrs.keys():
-                    linkUrl = link["href"]
-                    if linkUrl != None and "mailto" in linkUrl:
-                        emailAddress = linkUrl.replace("mailto:", "")
-                        if isValid(emailAddress):
-                            results.add(emailAddress.lower())
-            results.update(set(getTextSearchResults(soup)))
+            if isIriValid(possibleContactUrl):
+                soupResult = main.fetchSiteSoup(possibleContactUrl)
+                if soupResult is None:
+                    return emailResult
+                soup = soupResult.soup
+                if soup is None:
+                    if soupResult.error is not None:
+                        emailResult.error = soupResult.error
+                    return emailResult
+                linkContainers = soup.find_all("a")
+                for link in linkContainers:
+                    if "href" in link.attrs.keys():
+                        linkUrl = link["href"]
+                        if linkUrl != None and "mailto" in linkUrl:
+                            emailAddress = linkUrl.replace("mailto:", "")
+                            if isEmailValid(emailAddress):
+                                results.add(emailAddress.lower())
+                results.update(set(getTextSearchResults(soup)))
 
     print(results)
     print("--- %s seconds ---" % (time.time() - startTime))
