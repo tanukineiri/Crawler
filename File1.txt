@@ -4,3 +4,4 @@ Local conflicting line
 Ever newest
 
 new branch line
+new branch update
