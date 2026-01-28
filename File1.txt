@@ -3,3 +3,4 @@ newest line
 Local conflicting line
 Ever newest
 
+new branch line
