@@ -1,2 +1,3 @@
 newest line
+Local conflicting line
 Ever newest
