@@ -23,5 +23,6 @@ possibleContactKeywords = ["контакт", "контакты", "связать
 possibleNotUsefulSites = ["instagram", "facebook", "linkedin"]
 
 headerString = "НАЗВАНИЕ,ТЕЛЕФОН,САЙТ,ПОЧТА,ПОЧТА"
-primer_url = "https://www.houzz.ru/professionals/dizayn-interyera"
-maxItemNumber = 40515
+# primer_url = "https://www.houzz.ru/professionals/dizayn-interyera"
+primer_url = "https://flatica.ru/professionals/dizayn-interyera/c/all/probr-0~"
+maxItemNumber = 56263
