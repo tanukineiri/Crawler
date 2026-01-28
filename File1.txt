@@ -1,3 +1,5 @@
+test conflict line
 newest line
 Local conflicting line
 Ever newest
+
